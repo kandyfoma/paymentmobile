@@ -552,6 +552,199 @@ const channel = supabase
 
 ---
 
+## 🔄 Automatic Item Flagging as Paid
+
+Your apps can automatically flag items as paid by subscribing to payment status changes:
+
+### Payment Status Flow
+1. **Payment Initiated** → Status: `PENDING`
+2. **User Enters PIN** → FreshPay processes payment  
+3. **Webhook Called** → Status updates to `SUCCESS` or `FAILED`
+4. **Apps Get Notified** → Flag items as paid automatically
+
+### Complete Implementation Example
+
+**React Native Payment Component:**
+```javascript
+const PaymentScreen = ({ route }) => {
+  const { itemId, amount, itemName } = route.params;
+  const [paymentStatus, setPaymentStatus] = useState('idle');
+  const [transactionId, setTransactionId] = useState(null);
+
+  const handlePayment = async (phoneNumber) => {
+    setPaymentStatus('initiating');
+    
+    try {
+      // 1. Initiate payment
+      const txId = await initiatePayment('MyApp', userId, amount, phoneNumber);
+      setTransactionId(txId);
+      setPaymentStatus('pending');
+      
+      // 2. Subscribe to real-time updates
+      const unsubscribe = subscribeToPaymentStatus(txId, async (status) => {
+        setPaymentStatus(status.toLowerCase());
+        
+        if (status === 'SUCCESS') {
+          // 3. Flag item as paid in your app's database
+          await markItemAsPaid(itemId, txId);
+          
+          // 4. Show success and navigate
+          Alert.alert('Success!', `${itemName} has been paid successfully!`);
+          navigation.goBack();
+        } else if (status === 'FAILED') {
+          Alert.alert('Payment Failed', 'Please try again.');
+        }
+      });
+      
+      // Cleanup on component unmount
+      return () => unsubscribe();
+      
+    } catch (error) {
+      setPaymentStatus('failed');
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  const markItemAsPaid = async (itemId, transactionId) => {
+    // Update your app's local database/state
+    await AsyncStorage.setItem(`item_${itemId}_paid`, 'true');
+    await AsyncStorage.setItem(`item_${itemId}_transaction`, transactionId);
+    
+    // Or update remote database
+    // await updateItemStatus(itemId, { paid: true, transaction_id: transactionId });
+  };
+
+  return (
+    <View>
+      {paymentStatus === 'pending' && (
+        <View style={styles.waitingContainer}>
+          <ActivityIndicator size="large" color="#4CAF50" />
+          <Text style={styles.waitingText}>Waiting for payment confirmation...</Text>
+          <Text style={styles.instructionText}>Please enter your PIN on your phone</Text>
+        </View>
+      )}
+      
+      {paymentStatus === 'success' && (
+        <View style={styles.successContainer}>
+          <Text style={styles.successText}>✅ Payment Successful!</Text>
+          <Text>{itemName} is now paid</Text>
+        </View>
+      )}
+      
+      {/* Phone input and pay button */}
+    </View>
+  );
+};
+```
+
+### Enhanced Payment Service with Auto-Flagging
+
+**services/paymentService.js (Enhanced):**
+```javascript
+export const subscribeToPaymentStatus = (transactionId, onStatusChange) => {
+  console.log('🔔 Subscribing to payment updates for:', transactionId);
+  
+  const channel = supabase
+    .channel(`payment-${transactionId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'transactions',
+        filter: `id=eq.${transactionId}`
+      },
+      (payload) => {
+        console.log('📨 Payment status update:', payload.new.status);
+        onStatusChange(payload.new.status);
+        
+        // Optional: Store in AsyncStorage for persistence
+        AsyncStorage.setItem(
+          `payment_${transactionId}`, 
+          JSON.stringify(payload.new)
+        );
+      }
+    )
+    .subscribe((status) => {
+      console.log('Subscription status:', status);
+    });
+
+  return () => {
+    console.log('🔇 Unsubscribing from payment updates');
+    supabase.removeChannel(channel);
+  };
+};
+
+// Backup method to check payment status manually
+export const checkPaymentStatus = async (transactionId) => {
+  try {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('status, updated_at')
+      .eq('id', transactionId)
+      .single();
+
+    if (error) throw error;
+    return data.status;
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    return null;
+  }
+};
+```
+
+### E-commerce Integration Example
+
+**For flagging orders as paid:**
+```javascript
+const CheckoutScreen = () => {
+  const [orderStatus, setOrderStatus] = useState('pending_payment');
+  
+  const handlePayment = async () => {
+    try {
+      // Create order first
+      const orderId = await createOrder(cartItems, totalAmount);
+      
+      // Initiate payment
+      const txId = await initiatePayment('MyStore', userId, totalAmount, phoneNumber);
+      
+      // Subscribe to payment updates
+      subscribeToPaymentStatus(txId, async (status) => {
+        if (status === 'SUCCESS') {
+          // Mark order as paid
+          setOrderStatus('paid');
+          await updateOrderStatus(orderId, 'paid', txId);
+          
+          // Clear cart and show success
+          setCartItems([]);
+          alert('Payment successful! Your order is confirmed.');
+          navigation.navigate('OrderSuccess', { orderId });
+          
+        } else if (status === 'FAILED') {
+          setOrderStatus('payment_failed');
+          alert('Payment failed. Please try again.');
+        }
+      });
+      
+    } catch (error) {
+      alert('Error: ' + error.message);
+    }
+  };
+};
+```
+
+### Benefits of Real-Time Auto-Flagging
+
+- ⚡ **Instant**: Items get flagged as paid immediately when user enters PIN
+- 🔄 **Reliable**: Webhook + real-time subscriptions + polling fallback
+- 🤖 **Automatic**: No manual refresh or user intervention needed
+- 💾 **Persistent**: Payment status survives app restarts
+- 📱 **Multi-App**: All your apps get the same real-time updates
+
+**Your apps will automatically know when payments succeed and can flag items as paid immediately!** 🎉
+
+---
+
 ## 🔐 Security & Best Practices
 
 ### What's Protected
