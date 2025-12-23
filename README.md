@@ -7,15 +7,15 @@
 ## 🏗️ Architecture Overview
 
 This is a **Hub-and-Spoke** payment architecture where:
-- **The Hub**: Railway Express Server (centralized payment logic with fixed IP)
+- **The Hub**: Railway Express Server (centralized payment logic with fixed IP: `208.77.244.15`)
 - **The Spokes**: Your mobile apps (React Native apps + React.js web app)
-- **The Provider**: Moko Mobile Money via FreshPay PayDRC API
+- **The Provider**: Moko Mobile Money via FreshPay PayDRC API v5
 - **The Database**: Supabase PostgreSQL with real-time subscriptions
 
 ### Why This Architecture?
 
 ✅ **Security** - API keys stay on the server, never in mobile apps  
-✅ **Fixed IP** - Railway provides static IP for payment provider whitelisting  
+✅ **Fixed IP** - Railway provides static IP `208.77.244.15` for FreshPay whitelisting  
 ✅ **Maintainability** - Update payment logic once, all apps benefit  
 ✅ **Scalability** - Add new apps without duplicating code  
 ✅ **Auditability** - Single dashboard for all transactions  
@@ -23,30 +23,48 @@ This is a **Hub-and-Spoke** payment architecture where:
 
 ---
 
-## 🚀 Quick Start for Your Apps
+## 🚀 Production Endpoint
 
-### Payment Endpoint
+### Payment Hub URL
 ```
 https://web-production-a4586.up.railway.app/initiate-payment
 ```
 
-### Required Fields
-- `app_name` - Your app identifier (e.g., "Africanite App A")
-- `user_id` - User's ID from your app (optional but recommended)
-- `amount` - Payment amount (minimum 1)
-- `phone_number` - Customer's phone number (format: 243XXXXXXXXX)
-- `currency` - Payment currency (default: "USD")
-- `firstname` - Customer's first name (optional)
-- `lastname` - Customer's last name (optional)
-- `email` - Customer's email (optional)
+### Webhook URL (for FreshPay callbacks)
+```
+https://web-production-a4586.up.railway.app/moko-webhook
+```
+
+### Health Check
+```
+https://web-production-a4586.up.railway.app/
+```
 
 ---
 
-## 📱 Integration Examples
+## 📋 API Reference
 
-### React Native Integration
+### Required Fields
+- `phone_number` - Customer's phone number (format: 243XXXXXXXXX)
+- `amount` - Payment amount (minimum 1)
+- `app_name` - Your app identifier (e.g., "Africanite App A")
 
-#### Step 1: Create Payment Screen
+### Optional Fields  
+- `user_id` - User's ID from your app (recommended for tracking)
+- `currency` - Payment currency (default: "USD")
+- `firstname` - Customer's first name (default: "Africanite")
+- `lastname` - Customer's last name (default: "Service") 
+- `email` - Customer's email (default: "foma.kandy@gmail.com")
+
+### Supported Networks (Auto-Detected)
+| Phone Prefix | Network | Method | Example |
+|--------------|---------|---------|---------|
+| 81, 82, 83 | Vodacom M-Pesa | `mpesa` | 243828812498 |
+| 84, 85, 86, 89, 90, 91, 97, 99 | Airtel Money | `airtel` | 243997654321 |
+| 80 | Orange Money | `orange` | 243807654321 |
+| 98 | Africell Money | `afrimoney` | 243987654321 |
+
+---
 
 **Create a file: `lib/supabase.js` (for both React Native & React.js)**
 
@@ -63,23 +81,86 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 ## 💳 React Native Mobile App Integration
 
-### Step 3: Create Payment Service
+### Step 1: Install Dependencies
+```bash
+npm install @supabase/supabase-js @react-native-picker/picker
+# or
+yarn add @supabase/supabase-js @react-native-picker/picker
+```
 
-**Create: `services/paymentService.js`**
+### Step 2: Create Payment Service
+
+**services/paymentService.js**
 
 ```javascript
-import { supabase } from '../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
-export const initiatePayment = async (appName, userId, amount, phoneNumber) => {
+const PAYMENT_API_URL = 'https://web-production-a4586.up.railway.app/initiate-payment';
+const SUPABASE_URL = 'https://oacrwvfivsybkvndooyx.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hY3J3dmZpdnN5Ymt2bmRvb3l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQ4OTI3NzEsImV4cCI6MjA1MDQ2ODc3MX0.sb_publishable_wj3fQLQJ808R5CG5FG8FYw_5J11Ps4g';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+export const initiatePayment = async (appName, userId, amount, phoneNumber, userInfo = {}) => {
   try {
-    const { data, error } = await supabase.functions.invoke('initiate-payment', {
-      body: {
+    // Call Railway payment endpoint
+    const response = await fetch(PAYMENT_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         app_name: appName,
         user_id: userId,
         amount: amount,
+        phone_number: phoneNumber,
+        currency: 'USD',
+        // Optional - will use defaults if not provided:
+        firstname: userInfo.firstname,  // Default: "Africanite"
+        lastname: userInfo.lastname,    // Default: "Service"
+        email: userInfo.email          // Default: "foma.kandy@gmail.com"
+      })
+    });
 
-```javascript
-// services/paymentService.js
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Payment initiation failed');
+    }
+
+    return data.transaction_id;
+  } catch (error) {
+    console.error('Payment initiation failed:', error);
+    throw error;
+  }
+};
+
+export const subscribeToPaymentStatus = (transactionId, onStatusChange) => {
+  const channel = supabase
+    .channel('transaction-updates')
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'transactions',
+        filter: `id=eq.${transactionId}`
+      },
+      (payload) => {
+        onStatusChange(payload.new.status);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+};
+```
+
+### Step 3: Create Payment Screen Component
+
+**screens/PaymentScreen.js**
 import { createClient } from '@supabase/supabase-js';
 
 const PAYMENT_API_URL = 'https://web-production-a4586.up.railway.app/initiate-payment';
@@ -366,19 +447,230 @@ export default PaymentScreen;
 #### Step 3: Navigate to Payment Screen
 
 ```javascript
-// From anywhere in your app
-navigation.navigate('Payment', {
-  amount: 10,  // Amount in USD
-  userId: currentUser.id,
-  appName: 'Africanite App A'
-});
+---
+
+## 🧪 Testing Your Integration
+
+### Test the Payment Hub
+```bash
+# Test with minimal payload (uses defaults)
+curl -X POST https://web-production-a4586.up.railway.app/initiate-payment \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone_number": "243828812498",
+    "amount": 1,
+    "app_name": "Test App"
+  }'
+
+# Test with full payload
+curl -X POST https://web-production-a4586.up.railway.app/initiate-payment \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone_number": "243828812498",
+    "amount": 10,
+    "currency": "USD",
+    "app_name": "My App",
+    "user_id": "user123",
+    "firstname": "John",
+    "lastname": "Doe",
+    "email": "john@example.com"
+  }'
+```
+
+### Expected Response (Success)
+```json
+{
+  "transaction_id": "da5424fa-c2e9-4956-a604-33a619177ed5",
+  "reference": "AFMJIQG92SGMXOXA", 
+  "freshpay_transaction_id": "pd202512231766503295169b549f1",
+  "message": "Payment initiated. Please check your phone and enter your PIN.",
+  "status": "PENDING"
+}
+```
+
+### Error Responses
+```json
+// Missing required fields
+{
+  "error": "Missing required fields: app_name, amount, phone_number"
+}
+
+// Invalid phone number format
+{
+  "error": "Invalid phone number format. Expected 243XXXXXXXXX"
+}
+
+// Server configuration error
+{
+  "error": "Server configuration error"
+}
 ```
 
 ---
 
-### React.js Web Integration
+## 📊 Real-Time Status Updates
 
-#### Step 1: Create Payment Service
+Your apps can subscribe to payment status changes using Supabase real-time subscriptions:
+
+```javascript
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  'https://oacrwvfivsybkvndooyx.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9hY3J3dmZpdnN5Ymt2bmRvb3l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzQ4OTI3NzEsImV4cCI6MjA1MDQ2ODc3MX0.sb_publishable_wj3fQLQJ808R5CG5FG8FYw_5J11Ps4g'
+);
+
+// Subscribe to transaction status updates
+const channel = supabase
+  .channel('transaction-updates')
+  .on(
+    'postgres_changes',
+    {
+      event: 'UPDATE',
+      schema: 'public', 
+      table: 'transactions',
+      filter: `id=eq.${transactionId}`
+    },
+    (payload) => {
+      console.log('Status update:', payload.new.status);
+      
+      if (payload.new.status === 'SUCCESS') {
+        // Payment completed successfully
+        alert('Payment successful!');
+      } else if (payload.new.status === 'FAILED') {
+        // Payment failed
+        alert('Payment failed. Please try again.');
+      }
+      // Status can be: PENDING, SUCCESS, FAILED
+    }
+  )
+  .subscribe();
+
+// Cleanup when component unmounts
+// supabase.removeChannel(channel);
+```
+
+---
+
+## 🔐 Security & Best Practices
+
+### What's Protected
+- ✅ **Merchant credentials** (stored securely in Railway environment)
+- ✅ **API keys** (never exposed to client apps)
+- ✅ **Fixed IP whitelisting** (208.77.244.15 approved by FreshPay)
+- ✅ **Database writes** (server-side only with service role key)
+
+### What Your Apps Need
+- ✅ **Railway endpoint URL** (public, safe to expose)
+- ✅ **Supabase ANON key** (read-only, safe for client apps)
+- ❌ **NO merchant credentials needed**
+- ❌ **NO service role keys needed**
+
+### Error Handling Best Practices
+```javascript
+// 1. Validate phone number format
+if (!/^243[0-9]{9}$/.test(phoneNumber)) {
+  throw new Error('Invalid phone number. Must be 243XXXXXXXXX format');
+}
+
+// 2. Handle network errors
+try {
+  const response = await fetch(paymentEndpoint, options);
+  if (!response.ok) {
+    throw new Error('Network error');
+  }
+} catch (error) {
+  if (!error.response) {
+    // Network/connection error
+    alert('Please check your internet connection');
+    return;
+  }
+  // API error
+  alert(error.message);
+}
+
+// 3. Set payment timeout (2 minutes)
+const timeoutId = setTimeout(() => {
+  if (paymentStatus === 'PENDING') {
+    alert('Payment timeout. Please try again.');
+  }
+}, 120000);
+```
+
+---
+
+## 🚀 Production Checklist
+
+### For Railway Hub
+- ✅ Static IP configured: `208.77.244.15`
+- ✅ Environment variables set (MERCHANT_ID, MERCHANT_SECRET, etc.)
+- ✅ FreshPay IP whitelisted
+- ✅ Webhook URL configured in FreshPay portal
+- ✅ SSL certificate (automatic via Railway)
+
+### For Your Apps
+- ✅ Update endpoint to Railway URL
+- ✅ Add Supabase client for real-time updates  
+- ✅ Implement proper error handling
+- ✅ Add loading states and user feedback
+- ✅ Test with all network providers
+- ✅ Set up transaction logging
+
+### Monitoring
+- 📊 **Railway Logs**: Monitor payment requests and responses
+- 📊 **Supabase Dashboard**: View all transactions in real-time
+- 📊 **FreshPay Portal**: Track successful payments and settlements
+
+---
+
+## 📞 Support & Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| **403 Forbidden** | Check if IP `208.77.244.15` is whitelisted by FreshPay |
+| **Invalid operator** | Phone number auto-detects network. Ensure format is 243XXXXXXXXX |
+| **Merchant not recognized** | Verify `MERCHANT_ID` and `MERCHANT_SECRET` in Railway environment |
+| **Payment timeout** | User has 2 minutes to enter PIN. Implement timeout handling |
+| **CORS error** | Server has CORS enabled. Check your request format |
+| **Real-time not working** | Verify Supabase ANON key and subscription setup |
+
+### Health Checks
+- **Server Status**: https://web-production-a4586.up.railway.app/
+- **IP Check**: https://web-production-a4586.up.railway.app/check-ip
+- **Supabase Status**: https://status.supabase.com/
+
+### Contact Support
+- **FreshPay**: Alliance Tshindayi (for payment issues)
+- **Railway**: Support portal (for hosting issues)
+- **Supabase**: Support chat (for database issues)
+
+---
+
+## 🎉 Success! Your Payment Hub is Live
+
+**Production Endpoint**: https://web-production-a4586.up.railway.app/initiate-payment
+
+**Supported Networks**:
+- ✅ Vodacom M-Pesa (243-81/82/83-XXXXXXX)
+- ✅ Airtel Money (243-84/85/86/89/90/91/97/99-XXXXXXX) 
+- ✅ Orange Money (243-80-XXXXXXX)
+- ✅ Africell Money (243-98-XXXXXXX)
+
+**Features**:
+- ✅ Auto-network detection
+- ✅ Real-time status updates
+- ✅ Transaction logging
+- ✅ Webhook callbacks
+- ✅ Fixed IP (whitelisted)
+- ✅ Production tested & verified
+
+**Ready for integration into all your React Native and React.js apps!** 🚀
+
+For additional help, see [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) and [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md).
+
+---
+
+*Built with ❤️ for Africanite Services*
 
   return (
     <View style={styles.container}>
