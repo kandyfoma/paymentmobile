@@ -68,11 +68,11 @@ app.post('/debug-payment', (req, res) => {
   
   const number = phone_number.replace(/^243/, '');
   const prefix = number.substring(0, 2);
-  let method = 'vodacom';
-  if (['81', '82', '83'].includes(prefix)) method = 'vodacom';
+  let method = 'mpesa';
+  if (['81', '82', '83'].includes(prefix)) method = 'mpesa';
   if (['84', '85', '86', '89', '90', '91', '97', '99'].includes(prefix)) method = 'airtel';
   if (['80'].includes(prefix)) method = 'orange';
-  if (['98'].includes(prefix)) method = 'africell';
+  if (['98'].includes(prefix)) method = 'afrimoney';
   
   const formattedPhone = phone_number.startsWith('243') ? phone_number.substring(3) : phone_number;
   const customerNumber = formattedPhone.startsWith('0') ? formattedPhone : `0${formattedPhone}`;
