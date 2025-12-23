@@ -59,24 +59,31 @@ app.get('/payment-status/:transactionId', async (req, res) => {
 
     console.log('📊 Checking payment status for:', transactionId);
 
+    // Try to find transaction by multiple possible identifiers:
+    // 1. Supabase UUID (id)
+    // 2. Our reference (moko_reference) 
+    // 3. FreshPay transaction ID (freshpay_ref)
     const { data, error } = await supabase
       .from('transactions')
-      .select('id, status, amount, phone_number, currency, created_at, updated_at, metadata')
-      .eq('id', transactionId)
+      .select('id, status, amount, phone_number, currency, created_at, updated_at, metadata, moko_reference, freshpay_ref')
+      .or(`id.eq.${transactionId},moko_reference.eq.${transactionId},freshpay_ref.eq.${transactionId}`)
+      .limit(1)
       .single();
 
-    if (error) {
-      console.error('Error fetching transaction:', error);
+    if (error || !data) {
+      console.log('⏳ Transaction not found yet:', transactionId);
       return res.status(404).json({ 
         error: 'Transaction not found',
         transaction_id: transactionId 
       });
     }
 
-    console.log('✅ Transaction status:', data.status);
+    console.log('✅ Transaction found:', data.id, 'Status:', data.status);
 
     res.json({
       transaction_id: data.id,
+      reference: data.moko_reference,
+      freshpay_ref: data.freshpay_ref,
       status: data.status, // PENDING, SUCCESS, or FAILED
       amount: data.amount,
       currency: data.currency,
