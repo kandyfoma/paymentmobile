@@ -23,12 +23,12 @@ function detectNetwork(phoneNumber) {
   const number = phoneNumber.replace(/^243/, '');
   const prefix = number.substring(0, 2);
   
-  if (['81', '82', '83'].includes(prefix)) return 'vodacom';
-  if (['84', '85', '86', '89', '90', '91', '97', '99'].includes(prefix)) return 'airtel';
-  if (['80', '84', '85', '86', '89'].includes(prefix)) return 'orange';
-  if (['98'].includes(prefix)) return 'africell';
+  if (['81', '82', '83'].includes(prefix)) return 'Vodacom M-Pesa';
+  if (['84', '85', '86', '89', '90', '91', '97', '99'].includes(prefix)) return 'Airtel Money';
+  if (['80'].includes(prefix)) return 'Orange Money';
+  if (['98'].includes(prefix)) return 'Africell';
   
-  return 'vodacom';
+  return 'Vodacom M-Pesa';
 }
 
 // Helper: Generate unique reference
