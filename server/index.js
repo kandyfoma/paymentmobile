@@ -238,66 +238,106 @@ app.post('/initiate-payment', async (req, res) => {
   }
 });
 
-// Moko Webhook
+// Moko Webhook - Receives FreshPay callback and updates Supabase
 app.post('/moko-webhook', async (req, res) => {
   try {
-    console.log('Webhook received:', JSON.stringify(req.body));
+    console.log('🔔 Webhook received:', JSON.stringify(req.body, null, 2));
     
     const callbackData = req.body;
 
+    // Handle encrypted callback (if any)
     if (callbackData.data) {
-      console.log('Encrypted callback received');
-      return res.json({ status: 'Callback received' });
+      console.log('⚠️ Encrypted callback received - cannot process');
+      return res.json({ status: 'Encrypted callback received' });
     }
 
+    // Extract fields from FreshPay response
+    // FreshPay sends: Reference, Status, Transaction_id, Amount, Currency, Customer_Number
     const {
       Reference,
       reference,
       Trans_Status,
       Status,
       Transaction_id,
-      Trans_Status_Description
+      Trans_Status_Description,
+      Amount,
+      Customer_Number
     } = callbackData;
 
     const transactionRef = Reference || reference;
     const finalStatus = Trans_Status || Status;
+    const freshpayTransactionId = Transaction_id;
 
-    if (!transactionRef) {
-      return res.status(400).json({ error: 'Missing reference' });
+    console.log('📋 Parsed webhook data:', {
+      reference: transactionRef,
+      status: finalStatus,
+      freshpayTxId: freshpayTransactionId,
+      amount: Amount,
+      phone: Customer_Number
+    });
+
+    if (!transactionRef && !freshpayTransactionId) {
+      console.error('❌ No reference or transaction_id in webhook');
+      return res.status(400).json({ error: 'Missing reference or transaction_id' });
     }
 
+    // Determine new status
     let newStatus = 'PENDING';
     if (finalStatus === 'Successful' || finalStatus === 'Success') {
       newStatus = 'SUCCESS';
-    } else if (finalStatus === 'Failed') {
+    } else if (finalStatus === 'Failed' || finalStatus === 'Failure') {
       newStatus = 'FAILED';
     }
 
-    const { data: updatedTransaction, error: updateError } = await supabase
-      .from('transactions')
-      .update({ 
-        status: newStatus,
-        freshpay_ref: Transaction_id || undefined,
-        metadata: {
-          callback_data: callbackData,
-          final_status: finalStatus,
-          status_description: Trans_Status_Description,
-          updated_at: new Date().toISOString()
-        }
-      })
-      .or(`moko_reference.eq.${transactionRef},freshpay_ref.eq.${transactionRef}`)
-      .select();
+    console.log(`🔄 Updating transaction to status: ${newStatus}`);
 
-    if (updateError) {
-      console.error('Update error:', updateError);
+    // Build the query to find the transaction
+    // Try matching by moko_reference (our reference) or freshpay_ref (their transaction_id)
+    let query = supabase.from('transactions').update({ 
+      status: newStatus,
+      freshpay_ref: freshpayTransactionId || undefined,
+      metadata: {
+        callback_data: callbackData,
+        final_status: finalStatus,
+        status_description: Trans_Status_Description,
+        amount_confirmed: Amount,
+        customer_number: Customer_Number,
+        updated_at: new Date().toISOString()
+      }
+    });
+
+    // Match by reference or freshpay transaction ID
+    if (transactionRef && freshpayTransactionId) {
+      query = query.or(`moko_reference.eq.${transactionRef},freshpay_ref.eq.${freshpayTransactionId}`);
+    } else if (transactionRef) {
+      query = query.eq('moko_reference', transactionRef);
+    } else {
+      query = query.eq('freshpay_ref', freshpayTransactionId);
     }
 
-    console.log(`Transaction ${transactionRef} updated to ${newStatus}`);
+    const { data: updatedTransaction, error: updateError } = await query.select();
+
+    if (updateError) {
+      console.error('❌ Supabase update error:', updateError);
+      return res.status(500).json({ error: 'Failed to update transaction', details: updateError.message });
+    }
+
+    if (!updatedTransaction || updatedTransaction.length === 0) {
+      console.warn('⚠️ No transaction found for reference:', transactionRef, 'or freshpay_ref:', freshpayTransactionId);
+      // Still return success to FreshPay so they don't retry
+      return res.json({ 
+        status: 'No matching transaction found',
+        reference: transactionRef
+      });
+    }
+
+    console.log(`✅ Transaction ${transactionRef} updated to ${newStatus}`, updatedTransaction);
 
     res.json({ 
-      status: 'Callback processed',
+      status: 'Callback processed successfully',
       transaction_status: newStatus,
-      reference: transactionRef
+      reference: transactionRef,
+      transaction_id: updatedTransaction[0]?.id
     });
   } catch (error) {
     console.error('Webhook error:', error);
