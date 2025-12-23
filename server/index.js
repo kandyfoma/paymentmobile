@@ -48,6 +48,49 @@ app.get('/', (req, res) => {
   });
 });
 
+// Get payment status - GoShopper polls this endpoint instead of Supabase directly
+app.get('/payment-status/:transactionId', async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    
+    if (!transactionId) {
+      return res.status(400).json({ error: 'Transaction ID required' });
+    }
+
+    console.log('📊 Checking payment status for:', transactionId);
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id, status, amount, phone_number, currency, created_at, updated_at, metadata')
+      .eq('id', transactionId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching transaction:', error);
+      return res.status(404).json({ 
+        error: 'Transaction not found',
+        transaction_id: transactionId 
+      });
+    }
+
+    console.log('✅ Transaction status:', data.status);
+
+    res.json({
+      transaction_id: data.id,
+      status: data.status, // PENDING, SUCCESS, or FAILED
+      amount: data.amount,
+      currency: data.currency,
+      phone_number: data.phone_number,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      metadata: data.metadata
+    });
+  } catch (error) {
+    console.error('Status check error:', error);
+    res.status(500).json({ error: 'Failed to check status' });
+  }
+});
+
 // Get outbound IP (for FreshPay whitelist)
 app.get('/check-ip', async (req, res) => {
   try {
