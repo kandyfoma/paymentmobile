@@ -2,81 +2,51 @@
 
 > Centralized payment service for multiple Africanite mobile applications using Moko Mobile Money (FreshPay PayDRC API)
 
-[![Status](https://img.shields.io/badge/status-production-success)]() [![Platform](https://img.shields.io/badge/platform-Supabase-brightgreen)]() [![Region](https://img.shields.io/badge/region-EU%20Paris-blue)]()
+[![Status](https://img.shields.io/badge/status-production-success)]() [![Platform](https://img.shields.io/badge/platform-Railway-brightgreen)]() [![Region](https://img.shields.io/badge/region-EU%20West-blue)]()
 
 ## 🏗️ Architecture Overview
 
 This is a **Hub-and-Spoke** payment architecture where:
-- **The Hub**: Supabase Edge Functions (centralized payment logic)
-- **The Spokes**: Your mobile apps (App A, App B, App C, etc.)
+- **The Hub**: Railway Express Server (centralized payment logic with fixed IP)
+- **The Spokes**: Your mobile apps (React Native apps + React.js web app)
 - **The Provider**: Moko Mobile Money via FreshPay PayDRC API
-- **The Database**: PostgreSQL with real-time subscriptions
+- **The Database**: Supabase PostgreSQL with real-time subscriptions
 
 ### Why This Architecture?
 
 ✅ **Security** - API keys stay on the server, never in mobile apps  
+✅ **Fixed IP** - Railway provides static IP for payment provider whitelisting  
 ✅ **Maintainability** - Update payment logic once, all apps benefit  
 ✅ **Scalability** - Add new apps without duplicating code  
 ✅ **Auditability** - Single dashboard for all transactions  
-✅ **Real-time** - Apps get instant payment confirmations
-
-✅ **Auditability** - Single dashboard for all transactions  
-✅ **Real-time** - Apps get instant payment confirmations
+✅ **Real-time** - Apps get instant payment confirmations via Supabase subscriptions
 
 ---
 
 ## 🚀 Quick Start for Your Apps
 
-### Step 1: Install Supabase SDK
-
-**For React Native (Your Mobile Apps):**
-```bash
-npm install @supabase/supabase-js
-# or
-yarn add @supabase/supabase-js
+### Payment Endpoint
+```
+https://web-production-a4586.up.railway.app/initiate-payment
 ```
 
-**For React.js Web App:**
-```bash
-npm install @supabase/supabase-js
-# or
-yarn add @supabase/supabase-js
-```
-
-**For Other Platforms (Optional):**
-
-<details>
-<summary>Flutter</summary>
-
-```yaml
-dependencies:
-  supabase_flutter: ^2.0.0
-```
-</details>
-
-<details>
-<summary>Android (Kotlin)</summary>
-
-```gradle
-implementation 'io.github.jan-tennert.supabase:postgrest-kt:2.0.0'
-implementation 'io.github.jan-tennert.supabase:realtime-kt:2.0.0'
-```
-</details>
-
-<details>
-<summary>iOS (Swift)</summary>
-
-```swift
-// Package.swift
-dependencies: [
-    .package(url: "https://github.com/supabase/supabase-swift", from: "2.0.0")
-]
-```
-</details>
+### Required Fields
+- `app_name` - Your app identifier (e.g., "Africanite App A")
+- `user_id` - User's ID from your app (optional but recommended)
+- `amount` - Payment amount (minimum 1)
+- `phone_number` - Customer's phone number (format: 243XXXXXXXXX)
+- `currency` - Payment currency (default: "USD")
+- `firstname` - Customer's first name (optional)
+- `lastname` - Customer's last name (optional)
+- `email` - Customer's email (optional)
 
 ---
 
-### Step 2: Setup Supabase Client
+## 📱 Integration Examples
+
+### React Native Integration
+
+#### Step 1: Create Payment Screen
 
 **Create a file: `lib/supabase.js` (for both React Native & React.js)**
 
@@ -107,12 +77,43 @@ export const initiatePayment = async (appName, userId, amount, phoneNumber) => {
         app_name: appName,
         user_id: userId,
         amount: amount,
+
+```javascript
+// services/paymentService.js
+import { createClient } from '@supabase/supabase-js';
+
+const PAYMENT_API_URL = 'https://web-production-a4586.up.railway.app/initiate-payment';
+const SUPABASE_URL = 'https://oacrwvfivsybkvndooyx.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Get from CREDENTIALS_SECURE.txt
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+export const initiatePayment = async (appName, userId, amount, phoneNumber, userInfo = {}) => {
+  try {
+    // Call Railway payment endpoint
+    const response = await fetch(PAYMENT_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        app_name: appName,
+        user_id: userId,
+        amount: amount,
         phone_number: phoneNumber,
-        currency: 'CDF'
-      }
+        currency: 'USD',
+        firstname: userInfo.firstname || 'Customer',
+        lastname: userInfo.lastname || 'Customer',
+        email: userInfo.email || 'customer@africanite.com'
+      })
     });
 
-    if (error) throw error;
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error || 'Payment initiation failed');
+    }
+
     return data.transaction_id;
   } catch (error) {
     console.error('Payment initiation failed:', error);
@@ -143,9 +144,9 @@ export const subscribeToPaymentStatus = (transactionId, onStatusChange) => {
 };
 ```
 
-### Step 4: Create Payment Screen Component
+#### Step 2: Create Payment Screen Component
 
-**Create: `screens/PaymentScreen.js`**
+**screens/PaymentScreen.js**
 
 ```javascript
 import React, { useState, useEffect } from 'react';
@@ -158,11 +159,13 @@ import {
   StyleSheet,
   Alert
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { initiatePayment, subscribeToPaymentStatus } from '../services/paymentService';
 
 const PaymentScreen = ({ route, navigation }) => {
-  const { amount, userId, appName } = route.params; // Passed from previous screen
+  const { amount, userId, appName } = route.params;
   
+  const [provider, setProvider] = useState('Vodacom M-Pesa');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [transactionId, setTransactionId] = useState(null);
@@ -171,16 +174,16 @@ const PaymentScreen = ({ route, navigation }) => {
   useEffect(() => {
     if (!transactionId) return;
 
-    // Subscribe to payment status updates
+    // Subscribe to real-time payment status updates
     const unsubscribe = subscribeToPaymentStatus(transactionId, (status) => {
       setPaymentStatus(status);
       
       if (status === 'SUCCESS') {
-        Alert.alert('Success', 'Payment completed successfully!', [
+        Alert.alert('✅ Success', 'Payment completed successfully!', [
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);
       } else if (status === 'FAILED') {
-        Alert.alert('Failed', 'Payment failed. Please try again.');
+        Alert.alert('❌ Failed', 'Payment failed. Please try again.');
         setTransactionId(null);
         setLoading(false);
       }
@@ -207,8 +210,8 @@ const PaymentScreen = ({ route, navigation }) => {
       
       setTransactionId(txId);
       Alert.alert(
-        'Check Your Phone',
-        'Please enter your PIN on your phone to complete the payment'
+        '📱 Check Your Phone',
+        `A payment request has been sent to ${phoneNumber}. Please enter your PIN to complete.`
       );
     } catch (error) {
       Alert.alert('Error', error.message || 'Failed to initiate payment');
@@ -220,13 +223,162 @@ const PaymentScreen = ({ route, navigation }) => {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.waitingText}>Waiting for payment confirmation...</Text>
+        <Text style={styles.waitingText}>⏳ Waiting for payment confirmation...</Text>
         <Text style={styles.instructionText}>
-          Please enter your PIN on your phone
+          Please enter your PIN on {phoneNumber}
         </Text>
+        <TouchableOpacity 
+          style={styles.cancelButton}
+          onPress={() => {
+            setTransactionId(null);
+            setLoading(false);
+          }}
+        >
+          <Text style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
       </View>
     );
   }
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>💳 Make Payment</Text>
+      <Text style={styles.amountText}>Amount: ${amount} USD</Text>
+
+      <Text style={styles.label}>Select Provider:</Text>
+      <Picker
+        selectedValue={provider}
+        onValueChange={setProvider}
+        style={styles.picker}
+      >
+        <Picker.Item label="🔵 Vodacom M-Pesa" value="Vodacom M-Pesa" />
+        <Picker.Item label="🔴 Airtel Money" value="Airtel Money" />
+        <Picker.Item label="🟠 Orange Money" value="Orange Money" />
+        <Picker.Item label="🟢 Africell" value="Africell" />
+      </Picker>
+
+      <Text style={styles.label}>Phone Number:</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="243828812498"
+        keyboardType="phone-pad"
+        value={phoneNumber}
+        onChangeText={setPhoneNumber}
+        maxLength={12}
+        editable={!loading}
+      />
+
+      <TouchableOpacity
+        style={[styles.button, loading && styles.buttonDisabled]}
+        onPress={handlePayment}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Pay ${amount} USD</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  amountText: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    textAlign: 'center',
+    marginBottom: 30,
+  },
+  label: {
+    fontSize: 16,
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  picker: {
+    backgroundColor: '#fff',
+    marginBottom: 20,
+    borderRadius: 8,
+  },
+  input: {
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 8,
+    fontSize: 16,
+    marginBottom: 20,
+  },
+  button: {
+    backgroundColor: '#4CAF50',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  buttonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  waitingText: {
+    fontSize: 18,
+    textAlign: 'center',
+    marginTop: 20,
+    fontWeight: '600',
+  },
+  instructionText: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 10,
+    color: '#666',
+  },
+  cancelButton: {
+    marginTop: 20,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelText: {
+    color: '#666',
+    fontSize: 16,
+  },
+});
+
+export default PaymentScreen;
+```
+
+#### Step 3: Navigate to Payment Screen
+
+```javascript
+// From anywhere in your app
+navigation.navigate('Payment', {
+  amount: 10,  // Amount in USD
+  userId: currentUser.id,
+  appName: 'Africanite App A'
+});
+```
+
+---
+
+### React.js Web Integration
+
+#### Step 1: Create Payment Service
 
   return (
     <View style={styles.container}>
