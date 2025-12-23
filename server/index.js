@@ -62,6 +62,43 @@ app.get('/check-ip', async (req, res) => {
   }
 });
 
+// Debug endpoint - shows what would be sent to FreshPay
+app.post('/debug-payment', (req, res) => {
+  const { phone_number, amount, currency = 'USD', firstname = 'Test', lastname = 'User', email = 'test@test.com' } = req.body;
+  
+  const number = phone_number.replace(/^243/, '');
+  const prefix = number.substring(0, 2);
+  let method = 'vodacom';
+  if (['81', '82', '83'].includes(prefix)) method = 'vodacom';
+  if (['84', '85', '86', '89', '90', '91', '97', '99'].includes(prefix)) method = 'airtel';
+  if (['80'].includes(prefix)) method = 'orange';
+  if (['98'].includes(prefix)) method = 'africell';
+  
+  const formattedPhone = phone_number.startsWith('243') ? phone_number.substring(3) : phone_number;
+  const customerNumber = formattedPhone.startsWith('0') ? formattedPhone : `0${formattedPhone}`;
+  
+  const payload = {
+    merchant_id: process.env.MERCHANT_ID,
+    merchant_secrete: process.env.MERCHANT_SECRET,
+    amount: amount.toString(),
+    currency: currency,
+    action: 'debit',
+    customer_number: customerNumber,
+    firstname: firstname,
+    lastname: lastname,
+    email: email,
+    reference: 'DEBUG123',
+    method: method,
+    callback_url: `https://web-production-a4586.up.railway.app/moko-webhook`
+  };
+  
+  res.json({
+    message: 'This is what would be sent to FreshPay',
+    api_url: process.env.API_BASE_URL,
+    payload: payload
+  });
+});
+
 // Initiate Payment
 app.post('/initiate-payment', async (req, res) => {
   try {
