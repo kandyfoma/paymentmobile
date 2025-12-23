@@ -64,7 +64,7 @@ app.get('/check-ip', async (req, res) => {
 
 // Debug endpoint - shows what would be sent to FreshPay
 app.post('/debug-payment', (req, res) => {
-  const { phone_number, amount, currency = 'USD', firstname = 'Test', lastname = 'User', email = 'test@test.com' } = req.body;
+  const { phone_number, amount, currency = 'USD', firstname = 'Africanite', lastname = 'Service', email = 'foma.kandy@gmail.com' } = req.body;
   
   const number = phone_number.replace(/^243/, '');
   const prefix = number.substring(0, 2);
@@ -109,8 +109,8 @@ app.post('/initiate-payment', async (req, res) => {
       phone_number, 
       currency = 'USD',
       firstname = 'Africanite',
-      lastname = 'Customer',
-      email = 'customer@africanite.com'
+      lastname = 'Service',
+      email = 'foma.kandy@gmail.com'
     } = req.body;
 
     if (!app_name || !amount || !phone_number) {
