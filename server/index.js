@@ -139,7 +139,9 @@ app.post('/initiate-payment', async (req, res) => {
       callback_url: `${req.protocol}://${req.get('host')}/moko-webhook`
     };
 
-    console.log('Calling FreshPay API:', apiBaseUrl);
+    console.log('🚀 FreshPay Request:', JSON.stringify(freshpayPayload, null, 2));
+    console.log('📞 Detected Method:', method);
+    console.log('📱 Customer Number:', customerNumber);
 
     const freshpayResponse = await fetch(apiBaseUrl, {
       method: 'POST',
