@@ -47,6 +47,20 @@ app.get('/', (req, res) => {
   });
 });
 
+// Get outbound IP (for FreshPay whitelist)
+app.get('/check-ip', async (req, res) => {
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    res.json({ 
+      outbound_ip: data.ip,
+      message: 'Send this IP to FreshPay for whitelisting'
+    });
+  } catch (error) {
+    res.json({ error: 'Could not fetch IP' });
+  }
+});
+
 // Initiate Payment
 app.post('/initiate-payment', async (req, res) => {
   try {
