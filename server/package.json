@@ -1,0 +1,20 @@
+{
+  "name": "africanite-payment-server",
+  "version": "1.0.0",
+  "description": "Africanite Services Payment Hub with Fixed IP",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": ["payment", "moko", "freshpay"],
+  "author": "Africanite Services",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}

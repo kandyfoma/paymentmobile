@@ -1,0 +1,17 @@
+# Supabase
+.branches
+.temp
+.env
+supabase_cli.tar.gz
+supabase.exe
+
+# Local development
+.DS_Store
+*.log
+node_modules/
+
+# Credentials - NEVER COMMIT!
+.env.local
+credentials.txt
+CREDENTIALS_SECURE.txt
+*.txt
