@@ -164,6 +164,121 @@ app.get('/check-ip', async (req, res) => {
   }
 });
 
+// Check all pending transactions and update from FreshPay
+app.post('/check-pending-transactions', async (req, res) => {
+  try {
+    console.log('🔍 Checking all PENDING transactions...');
+    
+    // Get all PENDING transactions
+    const { data: pendingTxs, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      return res.status(500).json({ error: 'Failed to fetch transactions' });
+    }
+
+    if (!pendingTxs || pendingTxs.length === 0) {
+      return res.json({ message: 'No pending transactions found' });
+    }
+
+    console.log(`Found ${pendingTxs.length} pending transactions`);
+
+    const results = [];
+    
+    for (const tx of pendingTxs) {
+      if (!tx.moko_reference) {
+        results.push({ id: tx.id, status: 'skipped', reason: 'No moko_reference' });
+        continue;
+      }
+
+      try {
+        console.log(`Checking FreshPay status for ${tx.moko_reference}...`);
+        
+        const freshpayStatus = await fetch(process.env.API_BASE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            merchant_id: process.env.MERCHANT_ID,
+            merchant_secrete: process.env.MERCHANT_SECRET,
+            action: 'verify',
+            reference: tx.moko_reference
+          })
+        });
+
+        const freshpayData = await freshpayStatus.json();
+        
+        if (freshpayData.Status === 'Success' && freshpayData.Trans_Status) {
+          let newStatus = 'PENDING';
+          if (freshpayData.Trans_Status === 'Successful') {
+            newStatus = 'SUCCESS';
+          } else if (freshpayData.Trans_Status === 'Failed' || freshpayData.Trans_Status === 'Rejected') {
+            newStatus = 'FAILED';
+          }
+
+          if (newStatus !== 'PENDING') {
+            console.log(`✅ Updating ${tx.moko_reference} to ${newStatus}`);
+            await supabase.from('transactions').update({
+              status: newStatus,
+              freshpay_ref: freshpayData.Transaction_id,
+              metadata: {
+                ...tx.metadata,
+                freshpay_verify: freshpayData,
+                updated_via: 'manual_check',
+                checked_at: new Date().toISOString()
+              }
+            }).eq('id', tx.id);
+
+            results.push({ 
+              id: tx.id, 
+              reference: tx.moko_reference,
+              old_status: 'PENDING', 
+              new_status: newStatus,
+              freshpay_status: freshpayData.Trans_Status
+            });
+          } else {
+            results.push({ 
+              id: tx.id, 
+              reference: tx.moko_reference,
+              status: 'still_pending',
+              freshpay_status: freshpayData.Trans_Status
+            });
+          }
+        } else {
+          results.push({ 
+            id: tx.id, 
+            reference: tx.moko_reference,
+            status: 'not_found_in_freshpay'
+          });
+        }
+      } catch (error) {
+        console.error(`Error checking ${tx.moko_reference}:`, error);
+        results.push({ 
+          id: tx.id, 
+          reference: tx.moko_reference,
+          status: 'error', 
+          error: error.message 
+        });
+      }
+    }
+
+    res.json({
+      message: `Checked ${pendingTxs.length} pending transactions`,
+      results: results,
+      updated: results.filter(r => r.new_status).length
+    });
+  } catch (error) {
+    console.error('Error checking pending transactions:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Debug endpoint - shows what would be sent to FreshPay
 app.post('/debug-payment', (req, res) => {
   const { phone_number, amount, currency = 'USD', firstname = 'Africanite', lastname = 'Service', email = 'foma.kandy@gmail.com' } = req.body;
