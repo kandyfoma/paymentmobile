@@ -65,7 +65,7 @@ app.get('/payment-status/:transactionId', async (req, res) => {
     // 3. FreshPay transaction ID (freshpay_ref)
     const { data, error } = await supabase
       .from('transactions')
-      .select('id, status, amount, phone_number, currency, created_at, updated_at, metadata, moko_reference, freshpay_ref')
+      .select('id, status, amount, phone_number, currency, created_at, metadata, moko_reference, freshpay_ref')
       .or(`id.eq.${transactionId},moko_reference.eq.${transactionId},freshpay_ref.eq.${transactionId}`)
       .maybeSingle();
 
@@ -493,28 +493,31 @@ app.post('/moko-webhook', async (req, res) => {
     }
 
     // Extract fields from FreshPay response
-    // FreshPay sends: Reference, Status, Transaction_id, Amount, Currency, Customer_Number
+    // FreshPay sends: Reference, Trans_Status, Amount, Currency, Customer_Details, PayDRC_Reference
     const {
       Reference,
       reference,
       Trans_Status,
       Status,
       Transaction_id,
+      PayDRC_Reference,
       Trans_Status_Description,
       Amount,
-      Customer_Number
+      Customer_Number,
+      Customer_Details
     } = callbackData;
 
     const transactionRef = Reference || reference;
     const finalStatus = Trans_Status || Status;
-    const freshpayTransactionId = Transaction_id;
+    const freshpayTransactionId = PayDRC_Reference || Transaction_id;
+    const customerPhone = Customer_Number || Customer_Details;
 
     console.log('📋 Parsed webhook data:', {
       reference: transactionRef,
       status: finalStatus,
       freshpayTxId: freshpayTransactionId,
       amount: Amount,
-      phone: Customer_Number
+      phone: customerPhone
     });
 
     if (!transactionRef && !freshpayTransactionId) {
@@ -542,8 +545,8 @@ app.post('/moko-webhook', async (req, res) => {
         final_status: finalStatus,
         status_description: Trans_Status_Description,
         amount_confirmed: Amount,
-        customer_number: Customer_Number,
-        updated_at: new Date().toISOString()
+        customer_number: customerPhone,
+        webhook_received_at: new Date().toISOString()
       }
     });
 
