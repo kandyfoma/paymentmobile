@@ -67,11 +67,31 @@ app.get('/payment-status/:transactionId', async (req, res) => {
       .from('transactions')
       .select('id, status, amount, phone_number, currency, created_at, updated_at, metadata, moko_reference, freshpay_ref')
       .or(`id.eq.${transactionId},moko_reference.eq.${transactionId},freshpay_ref.eq.${transactionId}`)
-      .limit(1)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      console.log('⏳ Transaction not found yet:', transactionId);
+    if (error) {
+      console.error('❌ Supabase query error:', error);
+      return res.status(500).json({ 
+        error: 'Database query failed',
+        details: error.message 
+      });
+    }
+
+    if (!data) {
+      console.log('⏳ Transaction not found:', transactionId);
+      // Try to get more info - query all recent transactions
+      const { data: recentTxs } = await supabase
+        .from('transactions')
+        .select('id, moko_reference, freshpay_ref, created_at')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      console.log('🔍 Recent transactions:', recentTxs?.map(t => ({
+        id: t.id,
+        ref: t.moko_reference,
+        freshpay: t.freshpay_ref
+      })));
+      
       return res.status(404).json({ 
         error: 'Transaction not found',
         transaction_id: transactionId 
@@ -390,7 +410,7 @@ app.post('/initiate-payment', async (req, res) => {
       email: email,
       reference: reference,
       method: method,
-      callback_url: `${req.protocol}://${req.get('host')}/moko-webhook`
+      callback_url: `https://${req.get('host')}/moko-webhook`
     };
 
     console.log('🚀 FreshPay Request:', JSON.stringify(freshpayPayload, null, 2));
@@ -438,6 +458,10 @@ app.post('/initiate-payment', async (req, res) => {
         method: method
       }
     }).eq('id', transaction.id);
+
+    console.log('✅ Transaction created:', transaction.id);
+    console.log('📋 Reference:', reference);
+    console.log('🎫 FreshPay TxID:', freshpayData.Transaction_id);
 
     res.json({ 
       transaction_id: transaction.id, 
