@@ -78,6 +78,58 @@ app.get('/payment-status/:transactionId', async (req, res) => {
       });
     }
 
+    // If status is PENDING and we have a moko_reference, poll FreshPay directly
+    if (data.status === 'PENDING' && data.moko_reference) {
+      console.log('🔍 Polling FreshPay for status:', data.moko_reference);
+      
+      try {
+        const freshpayStatus = await fetch(process.env.API_BASE_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            merchant_id: process.env.MERCHANT_ID,
+            merchant_secrete: process.env.MERCHANT_SECRET,
+            action: 'verify',
+            reference: data.moko_reference
+          })
+        });
+
+        const freshpayData = await freshpayStatus.json();
+        console.log('✅ FreshPay status response:', freshpayData);
+
+        // Update status if FreshPay has new information
+        if (freshpayData.Status === 'Success' && freshpayData.Trans_Status) {
+          let newStatus = 'PENDING';
+          if (freshpayData.Trans_Status === 'Successful') {
+            newStatus = 'SUCCESS';
+          } else if (freshpayData.Trans_Status === 'Failed' || freshpayData.Trans_Status === 'Rejected') {
+            newStatus = 'FAILED';
+          }
+
+          if (newStatus !== 'PENDING') {
+            console.log(`🔄 Updating status from FreshPay polling: ${newStatus}`);
+            await supabase.from('transactions').update({
+              status: newStatus,
+              freshpay_ref: freshpayData.Transaction_id,
+              metadata: {
+                ...data.metadata,
+                freshpay_verify: freshpayData,
+                updated_via: 'polling'
+              }
+            }).eq('id', data.id);
+
+            data.status = newStatus;
+          }
+        }
+      } catch (pollError) {
+        console.error('FreshPay polling error:', pollError);
+        // Continue with existing status
+      }
+    }
+
     console.log('✅ Transaction found:', data.id, 'Status:', data.status);
 
     res.json({
